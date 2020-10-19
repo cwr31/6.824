@@ -1,10 +1,12 @@
 package mr
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
 
 //
 // Map functions return a slice of KeyValue.
@@ -13,6 +15,8 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+var workerId int
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -24,7 +28,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -34,8 +37,22 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the master.
-	// CallExample()
+	CallExample()
+	RegisterWorker()
+	time.Sleep(100000)
 
+}
+
+func RegisterWorker() {
+	req := RegisterRequest{}
+	reply := RegisterResponse{}
+	ok := call("Master.Register", &req, &reply)
+	log.Print("reply: ", reply)
+	log.Print("ok: ", ok)
+	if ok {
+		workerId = reply.workerId
+		log.Println("Register succeed, current workerId = ", workerId)
+	}
 }
 
 //

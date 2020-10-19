@@ -32,7 +32,10 @@ func main() {
 // from a plugin file, e.g. ../mrapps/wc.so
 //
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
+	log.Print("start load plugin")
 	p, err := plugin.Open(filename)
+	log.Print("p: ", p)
+	log.Print("err: ", err)
 	if err != nil {
 		log.Fatalf("cannot load plugin %v", filename)
 	}
