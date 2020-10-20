@@ -2,7 +2,6 @@ package mr
 
 import (
 	"fmt"
-	"time"
 )
 import "log"
 import "net/rpc"
@@ -16,7 +15,7 @@ type KeyValue struct {
 	Value string
 }
 
-var workerId int
+var WorkerId int
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -37,9 +36,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the master.
-	CallExample()
 	RegisterWorker()
-	time.Sleep(100000)
 
 }
 
@@ -50,8 +47,8 @@ func RegisterWorker() {
 	log.Print("reply: ", reply)
 	log.Print("ok: ", ok)
 	if ok {
-		workerId = reply.workerId
-		log.Println("Register succeed, current workerId = ", workerId)
+		WorkerId = reply.WorkerId
+		log.Println("Register succeed, current workerId = ", WorkerId)
 	}
 }
 

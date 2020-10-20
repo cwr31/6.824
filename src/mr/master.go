@@ -22,7 +22,7 @@ type Master struct {
 	// Your definitions here.
 	MapTasks     map[string]int
 	ReduceTasks  map[int]int
-	nextWorkerId int
+	NextWorkerId int
 }
 
 type TaskInfo struct {
@@ -87,8 +87,8 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 func (m *Master) Register(args *RegisterRequest, reply *RegisterResponse) error {
-	m.nextWorkerId++
-	reply.workerId = m.nextWorkerId
+	m.NextWorkerId++
+	reply.WorkerId = m.NextWorkerId
 	return nil
 }
 
@@ -132,7 +132,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	for _, v := range files {
 		m.MapTasks[v] = unassigned
 	}
-	m.nextWorkerId = 0
+	m.NextWorkerId = 0
 	//for i := 0; i<nReduce; i++{
 	//	m.ReduceTasks[i] = unassigned
 	//}

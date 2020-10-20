@@ -25,7 +25,7 @@ type RegisterRequest struct {
 }
 
 type RegisterResponse struct {
-	workerId int
+	WorkerId int
 }
 
 type ExampleArgs struct {
