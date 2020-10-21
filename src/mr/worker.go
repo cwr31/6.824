@@ -1,7 +1,10 @@
 package mr
 
 import (
+	"bufio"
 	"fmt"
+	"io/ioutil"
+	"os"
 )
 import "log"
 import "net/rpc"
@@ -15,7 +18,12 @@ type KeyValue struct {
 	Value string
 }
 
-var WorkerId int
+type MyWorker struct {
+	WorkerId    int
+	CurrentTask TaskInfo
+	Mapf        func(string, string) []KeyValue
+	Reducef     func(string, []string) string
+}
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -33,46 +41,110 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the master.
-	RegisterWorker()
+	w := MyWorker{}
+	w.Mapf = mapf
+	w.Reducef = reducef
+	w.Register()
+	w.run()
 
 }
 
-func RegisterWorker() {
-	req := RegisterRequest{}
-	reply := RegisterResponse{}
-	ok := call("Master.Register", &req, &reply)
-	log.Print("reply: ", reply)
-	log.Print("ok: ", ok)
-	if ok {
-		WorkerId = reply.WorkerId
-		log.Println("Register succeed, current workerId = ", WorkerId)
+func (w *MyWorker) run() {
+	for {
+		t := w.AcquireTask()
+		processTaskOK := w.processTask(t)
+		log.Printf("processTaskOK = %t", processTaskOK)
+		if processTaskOK {
+			w.UpdateTaskState(t.Id, completed)
+		} else {
+			w.UpdateTaskState(t.Id, fail)
+		}
 	}
 }
 
-//
-// example function to show how to make an RPC call to the master.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
+func (w *MyWorker) processTask(info TaskInfo) bool {
+	switch info.Type {
+	case _map:
+		return w.processMapTask(info)
+	case _reduce:
+		return w.processReduceTask(info)
+	}
+	return false
+}
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+func (w *MyWorker) processMapTask(info TaskInfo) bool {
+	contents, err := ioutil.ReadFile(info.InputName)
+	if err != nil {
+		return false
+	}
+	kvs := w.Mapf(info.InputName, string(contents))
+	reduces := make([][]KeyValue, info.NReduce)
+	for _, kv := range kvs {
+		idx := ihash(kv.Key) % info.NReduce
+		reduces[idx] = append(reduces[idx], kv)
+	}
+	for index, kv := range reduces {
+		fileName := fmt.Sprintf("mr-%d-%d", info.Id, index)
+		file, err := os.Create(fileName)
+		if err != nil {
+			log.Printf("Create file error")
+			return false
+		}
+		buf := bufio.NewWriter(file)
+		for _, v := range kv {
+			buf.WriteString(v.Key + "," + v.Value + "\n")
+		}
+		if buf.Flush() != nil {
+			log.Printf("Flush file error")
+			return false
+		}
+		if file.Close() != nil {
+			log.Printf("Close file error")
+			return false
+		}
+	}
+	return true
+}
 
-	// fill in the argument(s).
-	args.X = 99
+func (w *MyWorker) processReduceTask(info TaskInfo) bool {
+	fileName := fmt.Sprintf("mr-%d-%d", info.Id, index)
+	return false
+}
 
-	// declare a reply structure.
-	reply := ExampleReply{}
+func (w *MyWorker) UpdateTaskState(TaskId int, TaskState int) {
+	req := UpdateTaskStateReq{
+		WorkerId:  w.WorkerId,
+		TaskId:    TaskId,
+		TaskState: TaskState,
+	}
+	res := UpdateTaskStateRes{}
+	ok := call("Master.UpdateTaskState", &req, &res)
+	if ok && res.WorkerId == w.WorkerId {
+		log.Println("updateTaskState succeed, res =  ", res)
+	}
+}
 
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
+func (w *MyWorker) Register() {
+	req := RegisterReq{}
+	res := RegisterRes{}
+	ok := call("Master.Register", &req, &res)
+	if ok && res.WorkerId == w.WorkerId {
+		w.WorkerId = res.WorkerId
+		log.Println("Register succeed, res = ", res)
+	}
+}
 
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+func (w *MyWorker) AcquireTask() TaskInfo {
+	req := AcquireTaskReq{
+		WorkerId: w.WorkerId,
+	}
+	res := AcquireTaskRes{}
+	ok := call("Master.AcquireTask", &req, &res)
+	if ok && res.WorkerId == w.WorkerId {
+		log.Println("AcquireTask succeed, res = ", res)
+		return res.TaskInfo
+	}
+	return TaskInfo{}
 }
 
 //

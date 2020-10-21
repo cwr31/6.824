@@ -13,6 +13,7 @@ const (
 	unassigned = iota
 	assigned
 	completed
+	fail
 )
 
 const (
@@ -20,54 +21,74 @@ const (
 	_reduce
 )
 
-type Master struct {
-	// Your definitions here.
-	NextWorkerId int
-	NReduce      int
-	MapTasks     chan string
-	reduceTasks  chan string
-}
-
 type TaskInfo struct {
 	Type       int
+	Id         int
 	StartTime  time.Time
 	State      int
 	InputName  string
 	OutputName string
+	NReduce    int
 }
 
-type TaskInterface interface {
-	getNextTask() TaskInfo
-	timeout() bool
-	getFileIndex() int
-	getPartIndex() int
-	setNow()
+type Master struct {
+	// Your definitions here.
+	NextWorkerId int
+	NReduce      int
+	UniqueTaskId int
+	Tasks        chan TaskInfo
+	TaskState    []int
 }
 
-type MapTaskInfo struct {
-	TaskInfo
-}
-
-type ReduceTaskInfo struct {
-	TaskInfo
-}
-
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
-func (m *Master) Register(args *RegisterRequest, reply *RegisterResponse) error {
+func (m *Master) Register(req *RegisterReq, res *RegisterRes) error {
+	res.WorkerId = m.NextWorkerId
+	log.Printf("[master] Worker Register, Assign Id %d", m.NextWorkerId)
 	m.NextWorkerId++
-	reply.WorkerId = m.NextWorkerId
 	return nil
+}
+
+func (m *Master) AcquireTask(req *AcquireTaskReq, res *AcquireTaskRes) error {
+	res.WorkerId = req.WorkerId
+	res.TaskInfo = <-m.Tasks
+	res.TaskInfo.Id = m.UniqueTaskId
+	m.UniqueTaskId++
+	m.TaskState[m.UniqueTaskId] = assigned
+	return nil
+}
+
+func (m *Master) UpdateTaskState(req *UpdateTaskStateReq, res *UpdateTaskStateRes) error {
+	res.WorkerId = req.WorkerId
+	m.TaskState[req.TaskId] = req.TaskState
+	log.Printf("[master] Task %d state updated to %d", req.TaskId, req.TaskState)
+	return nil
+}
+
+//
+// create a Master.
+// main/mrmaster.go calls this function.
+// nReduce is the number of reduce tasks to use.
+//
+func MakeMaster(files []string, nReduce int) *Master {
+	m := Master{}
+	if len(files) > nReduce {
+		m.Tasks = make(chan TaskInfo, len(files))
+	} else {
+		m.Tasks = make(chan TaskInfo, nReduce)
+	}
+	for _, v := range files {
+		m.Tasks <- TaskInfo{
+			Type:      _map,
+			State:     unassigned,
+			InputName: v,
+			NReduce:   nReduce,
+		}
+	}
+	m.TaskState = make([]int, len(files)*(nReduce+1))
+	m.NextWorkerId = 0
+	m.NReduce = nReduce
+	// Your code here.
+	m.server()
+	return &m
 }
 
 //
@@ -96,24 +117,4 @@ func (m *Master) Done() bool {
 	// Your code here.
 
 	return ret
-}
-
-//
-// create a Master.
-// main/mrmaster.go calls this function.
-// nReduce is the number of reduce tasks to use.
-//
-func MakeMaster(files []string, nReduce int) *Master {
-	m := Master{}
-	m.MapTasks = make(map[string]int)
-	// one file correspond to one map task
-	for _, v := range files {
-		m.MapTasks <- v
-	}
-	m.NextWorkerId = 0
-
-	// Your code here.
-
-	m.server()
-	return &m
 }

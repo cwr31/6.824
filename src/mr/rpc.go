@@ -13,27 +13,31 @@ import "strconv"
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
-type TaskRequest struct {
-	workerId int
+
+type RegisterReq struct {
 }
 
-type TaskResponse struct {
-	taskInfo TaskInfo
-}
-
-type RegisterRequest struct {
-}
-
-type RegisterResponse struct {
+type RegisterRes struct {
 	WorkerId int
 }
 
-type ExampleArgs struct {
-	X int
+type AcquireTaskReq struct {
+	WorkerId int
 }
 
-type ExampleReply struct {
-	Y int
+type AcquireTaskRes struct {
+	WorkerId int
+	TaskInfo TaskInfo
+}
+
+type UpdateTaskStateReq struct {
+	WorkerId  int
+	TaskId    int
+	TaskState int
+}
+
+type UpdateTaskStateRes struct {
+	WorkerId int
 }
 
 // Add your RPC definitions here.
