@@ -1,2 +1,2 @@
 cd ../mrapps
-go build -buildmode=plugin ./wc.go
+go build -trimpath -buildmode=plugin ./wc.go

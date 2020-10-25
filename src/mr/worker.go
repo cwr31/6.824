@@ -2,9 +2,12 @@ package mr
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 )
 import "log"
 import "net/rpc"
@@ -20,7 +23,7 @@ type KeyValue struct {
 
 type MyWorker struct {
 	WorkerId    int
-	CurrentTask TaskInfo
+	CurrentTask Task
 	Mapf        func(string, string) []KeyValue
 	Reducef     func(string, []string) string
 }
@@ -51,18 +54,21 @@ func Worker(mapf func(string, string) []KeyValue,
 
 func (w *MyWorker) run() {
 	for {
-		t := w.AcquireTask()
+		t, err := w.AcquireTask()
+		if err != nil {
+			log.Printf(err.Error())
+		}
 		processTaskOK := w.processTask(t)
 		log.Printf("processTaskOK = %t", processTaskOK)
 		if processTaskOK {
 			w.UpdateTaskState(t.Id, completed)
 		} else {
-			w.UpdateTaskState(t.Id, fail)
+			w.UpdateTaskState(t.Id, failed)
 		}
 	}
 }
 
-func (w *MyWorker) processTask(info TaskInfo) bool {
+func (w *MyWorker) processTask(info Task) bool {
 	switch info.Type {
 	case _map:
 		return w.processMapTask(info)
@@ -72,9 +78,11 @@ func (w *MyWorker) processTask(info TaskInfo) bool {
 	return false
 }
 
-func (w *MyWorker) processMapTask(info TaskInfo) bool {
+func (w *MyWorker) processMapTask(info Task) bool {
+	log.Printf("processMapTask start, InputName = %v", info)
 	contents, err := ioutil.ReadFile(info.InputName)
 	if err != nil {
+		log.Printf("ReadFile not ok, %s", err)
 		return false
 	}
 	kvs := w.Mapf(info.InputName, string(contents))
@@ -106,9 +114,35 @@ func (w *MyWorker) processMapTask(info TaskInfo) bool {
 	return true
 }
 
-func (w *MyWorker) processReduceTask(info TaskInfo) bool {
-	fileName := fmt.Sprintf("mr-%d-%d", info.Id, index)
-	return false
+func (w *MyWorker) processReduceTask(info Task) bool {
+	maps := make(map[string][]string)
+	outputFileName := fmt.Sprintf("mr-out-%d", info.ReduceIndex)
+	ofile, _ := os.Create(outputFileName)
+	for i := 0; i < info.NMap; i++ {
+		inputFileName := fmt.Sprintf("mr-%d-%d", i, info.ReduceIndex)
+		ifile, err := os.Open(inputFileName)
+		if err != nil {
+			return false
+		}
+		buf := bufio.NewReader(ifile)
+		for {
+			line, _, err := buf.ReadLine()
+			if err == io.EOF {
+				break
+			}
+			s := strings.Split(string(line), ",")
+			k := s[0]
+			v := s[1]
+			maps[k] = make([]string, 0, 100)
+			maps[k] = append(maps[k], v)
+		}
+	}
+	//res := make([]string, 0, 100)
+	for k, v := range maps {
+		fmt.Fprintf(ofile, "%v %v\n", k, w.Reducef(k, v))
+	}
+	ofile.Close()
+	return true
 }
 
 func (w *MyWorker) UpdateTaskState(TaskId int, TaskState int) {
@@ -118,7 +152,7 @@ func (w *MyWorker) UpdateTaskState(TaskId int, TaskState int) {
 		TaskState: TaskState,
 	}
 	res := UpdateTaskStateRes{}
-	ok := call("Master.UpdateTaskState", &req, &res)
+	ok := call("Master.UpdateTaskStatus", &req, &res)
 	if ok && res.WorkerId == w.WorkerId {
 		log.Println("updateTaskState succeed, res =  ", res)
 	}
@@ -134,17 +168,18 @@ func (w *MyWorker) Register() {
 	}
 }
 
-func (w *MyWorker) AcquireTask() TaskInfo {
+func (w *MyWorker) AcquireTask() (Task, error) {
 	req := AcquireTaskReq{
 		WorkerId: w.WorkerId,
 	}
 	res := AcquireTaskRes{}
 	ok := call("Master.AcquireTask", &req, &res)
+	log.Printf("AcquireTask ok = %t, res.WorkerId = %d", ok, res.WorkerId)
 	if ok && res.WorkerId == w.WorkerId {
 		log.Println("AcquireTask succeed, res = ", res)
-		return res.TaskInfo
+		return res.Task, nil
 	}
-	return TaskInfo{}
+	return Task{}, errors.New("AcquireTask failed")
 }
 
 //

@@ -2,6 +2,7 @@ package mr
 
 import (
 	"log"
+	"sync"
 	"time"
 )
 import "net"
@@ -11,36 +12,54 @@ import "net/http"
 
 const (
 	unassigned = iota
+	queued
 	assigned
 	completed
-	fail
+	failed
 )
+
+const TIME_OUT = time.Second * 60
 
 const (
 	_map = iota
 	_reduce
 )
 
-type TaskInfo struct {
-	Type       int
-	Id         int
-	StartTime  time.Time
-	State      int
-	InputName  string
-	OutputName string
-	NReduce    int
+const (
+	map_phase = iota
+	reduce_phase
+)
+
+type Task struct {
+	Type        int
+	Id          int
+	InputName   string
+	NMap        int
+	OutputName  string
+	ReduceIndex int
+	NReduce     int
+	WorkerId    int
+	Status      int
+	StartTime   time.Time
 }
 
 type Master struct {
 	// Your definitions here.
+	mu           sync.Mutex
 	NextWorkerId int
+	NMap         int
 	NReduce      int
-	UniqueTaskId int
-	Tasks        chan TaskInfo
-	TaskState    []int
+	Tasks        chan Task
+	// taskId and status
+	TaskList []Task
+	done     bool
+	phase    int
 }
 
 func (m *Master) Register(req *RegisterReq, res *RegisterRes) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	res.WorkerId = m.NextWorkerId
 	log.Printf("[master] Worker Register, Assign Id %d", m.NextWorkerId)
 	m.NextWorkerId++
@@ -48,17 +67,23 @@ func (m *Master) Register(req *RegisterReq, res *RegisterRes) error {
 }
 
 func (m *Master) AcquireTask(req *AcquireTaskReq, res *AcquireTaskRes) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	res.WorkerId = req.WorkerId
-	res.TaskInfo = <-m.Tasks
-	res.TaskInfo.Id = m.UniqueTaskId
-	m.UniqueTaskId++
-	m.TaskState[m.UniqueTaskId] = assigned
+	res.Task = <-m.Tasks
+	// 在master中保存task状态
+	m.TaskList[res.Task.Id].WorkerId = req.WorkerId
+	m.TaskList[res.Task.Id].Status = assigned
+	m.TaskList[res.Task.Id].StartTime = time.Now()
 	return nil
 }
 
-func (m *Master) UpdateTaskState(req *UpdateTaskStateReq, res *UpdateTaskStateRes) error {
+func (m *Master) UpdateTaskStatus(req *UpdateTaskStateReq, res *UpdateTaskStateRes) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	res.WorkerId = req.WorkerId
-	m.TaskState[req.TaskId] = req.TaskState
+	m.TaskList[req.TaskId].Status = req.TaskState
 	log.Printf("[master] Task %d state updated to %d", req.TaskId, req.TaskState)
 	return nil
 }
@@ -71,23 +96,26 @@ func (m *Master) UpdateTaskState(req *UpdateTaskStateReq, res *UpdateTaskStateRe
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 	if len(files) > nReduce {
-		m.Tasks = make(chan TaskInfo, len(files))
+		m.Tasks = make(chan Task, len(files))
 	} else {
-		m.Tasks = make(chan TaskInfo, nReduce)
+		m.Tasks = make(chan Task, nReduce)
 	}
-	for _, v := range files {
-		m.Tasks <- TaskInfo{
+	m.mu = sync.Mutex{}
+	m.TaskList = make([]Task, len(files)+nReduce)
+	for taskId, filename := range files {
+		m.TaskList = append(m.TaskList, Task{
+			Id:        taskId,
 			Type:      _map,
-			State:     unassigned,
-			InputName: v,
+			InputName: filename,
+			NMap:      len(files),
 			NReduce:   nReduce,
-		}
+		})
 	}
-	m.TaskState = make([]int, len(files)*(nReduce+1))
+	m.NMap = len(files)
 	m.NextWorkerId = 0
 	m.NReduce = nReduce
-	// Your code here.
 	m.server()
+	go m.tickSchedule()
 	return &m
 }
 
@@ -112,9 +140,63 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	ret := false
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.done
+}
 
-	// Your code here.
+func (m *Master) tickSchedule() {
+	for {
+		if !m.Done() {
+			go m.schedule()
+			time.Sleep(time.Millisecond * 500)
+		}
+	}
+}
 
-	return ret
+func (m *Master) schedule() {
+	completedMapTasks := 0
+	completedTasks := 0
+	for _, task := range m.TaskList[0 : m.NMap-1] {
+		if task.Status == completed {
+			completedMapTasks++
+		}
+	}
+	if completedMapTasks == m.NMap {
+		for i := 0; i < m.NReduce; i++ {
+			m.TaskList = append(m.TaskList, Task{
+				Id:          m.NMap - 1 + i,
+				Type:        _reduce,
+				InputName:   "",
+				NMap:        m.NMap,
+				ReduceIndex: i,
+				Status:      unassigned,
+			})
+		}
+	}
+	for _, task := range m.TaskList {
+		switch task.Status {
+		case unassigned:
+			m.Tasks <- task
+			task.Status = queued
+			break
+		case queued:
+			break
+		case assigned:
+			if time.Now().Sub(task.StartTime) > TIME_OUT {
+				m.Tasks <- task
+			}
+			break
+		case completed:
+			completedTasks++
+			break
+		case failed:
+			m.Tasks <- task
+			task.Status = queued
+			break
+		}
+	}
+	if completedTasks == m.NMap+m.NReduce {
+		m.done = true
+	}
 }

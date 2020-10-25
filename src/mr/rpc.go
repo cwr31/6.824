@@ -27,7 +27,7 @@ type AcquireTaskReq struct {
 
 type AcquireTaskRes struct {
 	WorkerId int
-	TaskInfo TaskInfo
+	Task     Task
 }
 
 type UpdateTaskStateReq struct {
