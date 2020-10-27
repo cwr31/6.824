@@ -18,7 +18,7 @@ const (
 	failed
 )
 
-const TIME_OUT = time.Second * 60
+const TIME_OUT = time.Second * 5
 
 const (
 	_map = iota
@@ -80,11 +80,11 @@ func (m *Master) AcquireTask(req *AcquireTaskReq, res *AcquireTaskRes) error {
 }
 
 func (m *Master) UpdateTaskStatus(req *UpdateTaskStateReq, res *UpdateTaskStateRes) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	res.WorkerId = req.WorkerId
 	m.TaskList[req.TaskId].Status = req.TaskState
-	log.Printf("[master] Task %d state updated to %d", req.TaskId, req.TaskState)
+	log.Printf("[master] Task %d status updated to %d", req.TaskId, req.TaskState)
+
+	go m.schedule()
 	return nil
 }
 
@@ -101,7 +101,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 		m.Tasks = make(chan Task, nReduce)
 	}
 	m.mu = sync.Mutex{}
-	m.TaskList = make([]Task, len(files)+nReduce)
+	//m.TaskList = make([]Task, len(files)+nReduce)
 	for taskId, filename := range files {
 		m.TaskList = append(m.TaskList, Task{
 			Id:        taskId,
@@ -148,6 +148,7 @@ func (m *Master) Done() bool {
 func (m *Master) tickSchedule() {
 	for {
 		if !m.Done() {
+			log.Printf("just tick it")
 			go m.schedule()
 			time.Sleep(time.Millisecond * 500)
 		}
@@ -155,17 +156,24 @@ func (m *Master) tickSchedule() {
 }
 
 func (m *Master) schedule() {
+	log.Printf("schedule.........")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	log.Printf("[master] taskList size = %d", len(m.TaskList))
 	completedMapTasks := 0
 	completedTasks := 0
-	for _, task := range m.TaskList[0 : m.NMap-1] {
-		if task.Status == completed {
+	for taskId := range m.TaskList[0:m.NMap] {
+		if m.TaskList[taskId].Status == completed {
 			completedMapTasks++
 		}
 	}
-	if completedMapTasks == m.NMap {
+	log.Printf("[master] completedMapTasks = %d, NMap = %d", completedMapTasks, m.NMap)
+	if completedMapTasks == m.NMap && m.phase == map_phase {
+		m.phase = reduce_phase
 		for i := 0; i < m.NReduce; i++ {
 			m.TaskList = append(m.TaskList, Task{
-				Id:          m.NMap - 1 + i,
+				Id:          m.NMap + i,
 				Type:        _reduce,
 				InputName:   "",
 				NMap:        m.NMap,
@@ -174,17 +182,19 @@ func (m *Master) schedule() {
 			})
 		}
 	}
-	for _, task := range m.TaskList {
+	for taskId, task := range m.TaskList {
 		switch task.Status {
 		case unassigned:
 			m.Tasks <- task
-			task.Status = queued
+			m.TaskList[taskId].Status = queued
 			break
 		case queued:
 			break
 		case assigned:
 			if time.Now().Sub(task.StartTime) > TIME_OUT {
+				log.Printf("[master] Task %d timeout, reassign...", taskId)
 				m.Tasks <- task
+				m.TaskList[taskId].Status = queued
 			}
 			break
 		case completed:
@@ -192,11 +202,13 @@ func (m *Master) schedule() {
 			break
 		case failed:
 			m.Tasks <- task
-			task.Status = queued
+			m.TaskList[taskId].Status = queued
 			break
 		}
 	}
+	log.Printf("[master] completedTasks = %d", completedTasks)
 	if completedTasks == m.NMap+m.NReduce {
+		log.Printf("[master] done")
 		m.done = true
 	}
 }

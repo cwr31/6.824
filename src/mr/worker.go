@@ -49,7 +49,15 @@ func Worker(mapf func(string, string) []KeyValue,
 	w.Reducef = reducef
 	w.Register()
 	w.run()
-
+	//w.processReduceTask(Task{
+	//		Type:        0,
+	//		Id:          0,
+	//		InputName:   "",
+	//		NMap:        1,
+	//		OutputName:  "",
+	//		ReduceIndex: 0,
+	//		NReduce:     0,
+	//	})
 }
 
 func (w *MyWorker) run() {
@@ -61,9 +69,9 @@ func (w *MyWorker) run() {
 		processTaskOK := w.processTask(t)
 		log.Printf("processTaskOK = %t", processTaskOK)
 		if processTaskOK {
-			w.UpdateTaskState(t.Id, completed)
+			w.UpdateTaskStatus(t.Id, completed)
 		} else {
-			w.UpdateTaskState(t.Id, failed)
+			w.UpdateTaskStatus(t.Id, failed)
 		}
 	}
 }
@@ -79,7 +87,7 @@ func (w *MyWorker) processTask(info Task) bool {
 }
 
 func (w *MyWorker) processMapTask(info Task) bool {
-	log.Printf("processMapTask start, InputName = %v", info)
+	log.Printf("[worker-%d] processMapTask start, InputName = %v", w.WorkerId, info)
 	contents, err := ioutil.ReadFile(info.InputName)
 	if err != nil {
 		log.Printf("ReadFile not ok, %s", err)
@@ -115,9 +123,8 @@ func (w *MyWorker) processMapTask(info Task) bool {
 }
 
 func (w *MyWorker) processReduceTask(info Task) bool {
+	log.Printf("[worker-%d] processReduceTask start, InputName = %v", w.WorkerId, info)
 	maps := make(map[string][]string)
-	outputFileName := fmt.Sprintf("mr-out-%d", info.ReduceIndex)
-	ofile, _ := os.Create(outputFileName)
 	for i := 0; i < info.NMap; i++ {
 		inputFileName := fmt.Sprintf("mr-%d-%d", i, info.ReduceIndex)
 		ifile, err := os.Open(inputFileName)
@@ -133,11 +140,12 @@ func (w *MyWorker) processReduceTask(info Task) bool {
 			s := strings.Split(string(line), ",")
 			k := s[0]
 			v := s[1]
-			maps[k] = make([]string, 0, 100)
 			maps[k] = append(maps[k], v)
 		}
 	}
-	//res := make([]string, 0, 100)
+	outputFileName := fmt.Sprintf("mr-out-%d", info.ReduceIndex)
+	log.Printf("[worker-%d] outputFileName=%s", w.WorkerId, outputFileName)
+	ofile, _ := os.Create(outputFileName)
 	for k, v := range maps {
 		fmt.Fprintf(ofile, "%v %v\n", k, w.Reducef(k, v))
 	}
@@ -145,7 +153,7 @@ func (w *MyWorker) processReduceTask(info Task) bool {
 	return true
 }
 
-func (w *MyWorker) UpdateTaskState(TaskId int, TaskState int) {
+func (w *MyWorker) UpdateTaskStatus(TaskId int, TaskState int) {
 	req := UpdateTaskStateReq{
 		WorkerId:  w.WorkerId,
 		TaskId:    TaskId,
@@ -154,7 +162,7 @@ func (w *MyWorker) UpdateTaskState(TaskId int, TaskState int) {
 	res := UpdateTaskStateRes{}
 	ok := call("Master.UpdateTaskStatus", &req, &res)
 	if ok && res.WorkerId == w.WorkerId {
-		log.Println("updateTaskState succeed, res =  ", res)
+		log.Printf("[worker-%d] Update Task %d Status succeed, res = %v", w.WorkerId, req.TaskId, res)
 	}
 }
 
@@ -174,7 +182,7 @@ func (w *MyWorker) AcquireTask() (Task, error) {
 	}
 	res := AcquireTaskRes{}
 	ok := call("Master.AcquireTask", &req, &res)
-	log.Printf("AcquireTask ok = %t, res.WorkerId = %d", ok, res.WorkerId)
+	log.Printf("[worker-%d] AcquireTask ok = %t, res.WorkerId = %d, res.TaskId = %d", w.WorkerId, ok, res.WorkerId, res.Task.Id)
 	if ok && res.WorkerId == w.WorkerId {
 		log.Println("AcquireTask succeed, res = ", res)
 		return res.Task, nil
