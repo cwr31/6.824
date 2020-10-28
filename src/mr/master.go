@@ -54,9 +54,11 @@ type Master struct {
 	TaskList []Task
 	done     bool
 	phase    int
+	sch      chan bool
 }
 
 func (m *Master) Register(req *RegisterReq, res *RegisterRes) error {
+	log.Printf("Register lock = %+v", m.mu)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -67,11 +69,12 @@ func (m *Master) Register(req *RegisterReq, res *RegisterRes) error {
 }
 
 func (m *Master) AcquireTask(req *AcquireTaskReq, res *AcquireTaskRes) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	log.Printf("AcquireTask lock = %+v", m.mu)
 	res.WorkerId = req.WorkerId
 	res.Task = <-m.Tasks
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	// 在master中保存task状态
 	m.TaskList[res.Task.Id].WorkerId = req.WorkerId
 	m.TaskList[res.Task.Id].Status = assigned
@@ -80,11 +83,15 @@ func (m *Master) AcquireTask(req *AcquireTaskReq, res *AcquireTaskRes) error {
 }
 
 func (m *Master) UpdateTaskStatus(req *UpdateTaskStateReq, res *UpdateTaskStateRes) error {
+	log.Printf("UpdateTaskStatus lock = %+v", m.mu)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	res.WorkerId = req.WorkerId
 	m.TaskList[req.TaskId].Status = req.TaskState
 	log.Printf("[master] Task %d status updated to %d", req.TaskId, req.TaskState)
 
-	go m.schedule()
+	//go m.schedule()
 	return nil
 }
 
@@ -111,6 +118,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 			NReduce:   nReduce,
 		})
 	}
+	m.sch = make(chan bool, 1)
 	m.NMap = len(files)
 	m.NextWorkerId = 0
 	m.NReduce = nReduce
@@ -140,25 +148,28 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	return m.done
 }
 
 func (m *Master) tickSchedule() {
 	for {
+		log.Printf("m.Done = %v", m.Done())
 		if !m.Done() {
 			log.Printf("just tick it")
 			go m.schedule()
-			time.Sleep(time.Millisecond * 500)
+			//<- m.sch
+			time.Sleep(time.Millisecond * 1000)
 		}
 	}
 }
 
 func (m *Master) schedule() {
-	log.Printf("schedule.........")
+	log.Printf("schedule lock = %+v", m.mu)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.Done() {
+		return
+	}
 
 	log.Printf("[master] taskList size = %d", len(m.TaskList))
 	completedMapTasks := 0
@@ -211,4 +222,5 @@ func (m *Master) schedule() {
 		log.Printf("[master] done")
 		m.done = true
 	}
+	//m.sch <- true
 }

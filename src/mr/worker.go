@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"time"
 )
 import "log"
 import "net/rpc"
@@ -73,6 +74,7 @@ func (w *MyWorker) run() {
 		} else {
 			w.UpdateTaskStatus(t.Id, failed)
 		}
+		time.Sleep(time.Second)
 	}
 }
 
@@ -87,7 +89,7 @@ func (w *MyWorker) processTask(info Task) bool {
 }
 
 func (w *MyWorker) processMapTask(info Task) bool {
-	log.Printf("[worker-%d] processMapTask start, InputName = %v", w.WorkerId, info)
+	log.Printf("[worker-%d] processMapTask start, InputName = %+v", w.WorkerId, info)
 	contents, err := ioutil.ReadFile(info.InputName)
 	if err != nil {
 		log.Printf("ReadFile not ok, %s", err)
@@ -100,8 +102,9 @@ func (w *MyWorker) processMapTask(info Task) bool {
 		reduces[idx] = append(reduces[idx], kv)
 	}
 	for index, kv := range reduces {
-		fileName := fmt.Sprintf("mr-%d-%d", info.Id, index)
-		file, err := os.Create(fileName)
+		fileName :=
+			fmt.Sprintf("mr-%d-%d", info.Id, index)
+		file, err := ioutil.TempFile("/home/cwr/projects/6.824/src/main/mr-tmp", "map-")
 		if err != nil {
 			log.Printf("Create file error")
 			return false
@@ -118,12 +121,13 @@ func (w *MyWorker) processMapTask(info Task) bool {
 			log.Printf("Close file error")
 			return false
 		}
+		os.Rename(file.Name(), fileName)
 	}
 	return true
 }
 
 func (w *MyWorker) processReduceTask(info Task) bool {
-	log.Printf("[worker-%d] processReduceTask start, InputName = %v", w.WorkerId, info)
+	log.Printf("[worker-%d] processReduceTask start, InputName = %+v", w.WorkerId, info)
 	maps := make(map[string][]string)
 	for i := 0; i < info.NMap; i++ {
 		inputFileName := fmt.Sprintf("mr-%d-%d", i, info.ReduceIndex)
@@ -145,11 +149,12 @@ func (w *MyWorker) processReduceTask(info Task) bool {
 	}
 	outputFileName := fmt.Sprintf("mr-out-%d", info.ReduceIndex)
 	log.Printf("[worker-%d] outputFileName=%s", w.WorkerId, outputFileName)
-	ofile, _ := os.Create(outputFileName)
+	ofile, _ :=
+		ioutil.TempFile("/home/cwr/projects/6.824/src/main/mr-tmp", "reduce-")
 	for k, v := range maps {
 		fmt.Fprintf(ofile, "%v %v\n", k, w.Reducef(k, v))
 	}
-	ofile.Close()
+	os.Rename(ofile.Name(), outputFileName)
 	return true
 }
 
@@ -162,7 +167,7 @@ func (w *MyWorker) UpdateTaskStatus(TaskId int, TaskState int) {
 	res := UpdateTaskStateRes{}
 	ok := call("Master.UpdateTaskStatus", &req, &res)
 	if ok && res.WorkerId == w.WorkerId {
-		log.Printf("[worker-%d] Update Task %d Status succeed, res = %v", w.WorkerId, req.TaskId, res)
+		log.Printf("[worker-%d] Update Task %d Status succeed, res = %+v", w.WorkerId, req.TaskId, res)
 	}
 }
 
@@ -182,7 +187,7 @@ func (w *MyWorker) AcquireTask() (Task, error) {
 	}
 	res := AcquireTaskRes{}
 	ok := call("Master.AcquireTask", &req, &res)
-	log.Printf("[worker-%d] AcquireTask ok = %t, res.WorkerId = %d, res.TaskId = %d", w.WorkerId, ok, res.WorkerId, res.Task.Id)
+	log.Printf("[worker-%d] AcquireTask ok = %t, res = %+v", w.WorkerId, ok, res)
 	if ok && res.WorkerId == w.WorkerId {
 		log.Println("AcquireTask succeed, res = ", res)
 		return res.Task, nil
