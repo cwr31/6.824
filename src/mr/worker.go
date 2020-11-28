@@ -104,7 +104,7 @@ func (w *MyWorker) processMapTask(info Task) bool {
 	for index, kv := range reduces {
 		fileName :=
 			fmt.Sprintf("mr-%d-%d", info.Id, index)
-		file, err := ioutil.TempFile("/home/cwr/projects/6.824/src/main/mr-tmp", "map-")
+		file, err := ioutil.TempFile("/Users/cwr/Desktop/projects/6.824/src/main/mr-tmp", "map-")
 		if err != nil {
 			log.Printf("Create file error")
 			return false
@@ -150,7 +150,7 @@ func (w *MyWorker) processReduceTask(info Task) bool {
 	outputFileName := fmt.Sprintf("mr-out-%d", info.ReduceIndex)
 	log.Printf("[worker-%d] outputFileName=%s", w.WorkerId, outputFileName)
 	ofile, _ :=
-		ioutil.TempFile("/home/cwr/projects/6.824/src/main/mr-tmp", "reduce-")
+		ioutil.TempFile("/Users/cwr/Desktop/projects/6.824/src/main/mr-tmp", "reduce-")
 	for k, v := range maps {
 		fmt.Fprintf(ofile, "%v %v\n", k, w.Reducef(k, v))
 	}
